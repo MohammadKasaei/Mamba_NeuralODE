@@ -1,5 +1,10 @@
 # Token-conditioned Neural ODE language models
 
+The nine-model, three-seed study covering all four tasks is configured in
+`configs/all_tasks_{synthetic,language}.yaml`. See [the all-task training protocol](docs/all_tasks_training.md)
+for validation-based stopping (20,000-update ceiling), execution/resume commands,
+the reserved Shakespeare test partition, and detailed per-task report locations.
+
 A reproducible PyTorch project testing whether a token should enter recurrent dynamics through an initial condition, a constant control, or both. Includes nine architectures, fixed-step numerical controls, three dynamic synthetic tasks, character-level Tiny Shakespeare, single-device/DDP FP16 training, diagnostics, benchmarks, and planned ablations. It is designed for 4 × RTX 2080 Ti (11 GiB each).
 
 The scientific objective is an interpretable comparison, including negative results. **Euler conditioned NODE and the residual control are exactly the same model when their weights and K match.** Explicit augmentation is a correctness experiment, not additional model capacity.

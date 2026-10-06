@@ -29,8 +29,13 @@ class Config:
     seq_len: int = 64
     eval_lengths: tuple = (128, 256, 512, 1024, 2048)
     train_steps: int = 1000
+    early_stopping_patience: int = 0
+    early_stopping_min_delta: float = 0.001
+    early_stopping_min_steps: int = 1000
     eval_every: int = 100
     eval_batches: int = 8
+    eval_batch_size: int = 0  # zero uses the training microbatch
+    eval_token_budget: int = 8192  # maximum tokens per long-context test microbatch
     learning_rate: float = 0.001
     weight_decay: float = 0.01
     warmup_steps: int = 50
@@ -42,6 +47,8 @@ class Config:
     copy_items: int = 4
     recall_pairs: int = 8
     data_path: str = "data_cache/tiny_shakespeare.txt"
+    language_train_fraction: float = 0.9
+    language_val_fraction: float = 0.1
     output_dir: str = "results/run"
     resume: str = ""
     match_parameters: int = 0
@@ -65,10 +72,21 @@ class Config:
             raise ValueError("embedding_dim must divide transformer_heads")
         if self.eval_lengths and min(self.eval_lengths) < 1:
             raise ValueError("eval_lengths must be positive")
+        if self.early_stopping_patience < 0 or self.early_stopping_min_delta < 0 or self.early_stopping_min_steps < 0:
+            raise ValueError("Early stopping settings must be nonnegative")
+        if self.eval_batch_size < 0 or self.eval_token_budget < 1:
+            raise ValueError("Evaluation batch size must be nonnegative and token budget positive")
+        if not (0 < self.language_train_fraction < 1 and 0 < self.language_val_fraction < 1
+                and self.language_train_fraction + self.language_val_fraction <= 1 + 1e-12):
+            raise ValueError("Language split fractions must be positive and sum to at most one")
         return self
 
     def to_dict(self):
         return asdict(self)
+
+    @property
+    def evaluation_batch_size(self):
+        return self.eval_batch_size or self.batch_size
 
 
 def load_config(path=None, overrides=()):

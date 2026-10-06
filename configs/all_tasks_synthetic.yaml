@@ -1,0 +1,28 @@
+# Main architecture comparison. Explicitly smaller than the reference 128/256
+# dimensions, and 4x the approximate capacity of the earlier 32/64 follow-up.
+model: conditioned
+task: associative_recall
+embedding_dim: 64
+hidden_dim: 128
+latent_dim: 128
+field_width: 128
+transformer_ff: 256
+batch_size: 1024
+seq_len: 64
+eval_lengths: [128, 256, 512, 1024, 2048]
+train_steps: 20000
+eval_every: 25
+eval_batch_size: 128
+eval_batches: 4
+eval_token_budget: 65536
+early_stopping_patience: 10
+early_stopping_min_delta: 0.001
+early_stopping_min_steps: 100
+warmup_steps: 100
+learning_rate: 0.001
+vocab_symbols: 16
+recall_pairs: 8
+copy_items: 4
+amp: true
+match_tolerance: 0.01
+output_dir: results/all_tasks_large_batch

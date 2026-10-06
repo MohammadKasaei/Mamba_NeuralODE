@@ -39,14 +39,15 @@ def estimate_flops(model, x):
     return count[0]/x.numel()
 
 
-def benchmark(model, x, y, cfg, device, warmup=3, repeats=10, initial_scale=65536.0):
+def benchmark(model, x, y, cfg, device, warmup=3, repeats=10, initial_scale=65536.0, return_stats=False):
     if repeats < 1 or warmup < 0:
         raise ValueError("repeats >= 1 and warmup >= 0 required")
     results = {"parameters": parameter_count(model), "nfe_per_token": model.nfe_per_token,
                "batch_size": x.size(0), "seq_len": x.size(1), "amp_fp16": cfg.amp and device.type == "cuda",
                "forward_flops_per_token_estimate": estimate_flops(model, x),
                "flops_scope": "dominant dense multiply-adds; excludes elementwise, backward and optimizer",
-               "timing_scope": "single device, resident batch; training includes optimizer, excludes data generation"}
+               "timing_scope": "single device, resident batch; training includes optimizer, excludes data generation",
+               "includes_state_statistics": return_stats}
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.0)
     scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp and device.type == "cuda", init_scale=initial_scale)
     skipped = [0]
@@ -56,7 +57,8 @@ def benchmark(model, x, y, cfg, device, warmup=3, repeats=10, initial_scale=6553
             if training:
                 optimizer.zero_grad(set_to_none=True)
             with torch.set_grad_enabled(training), autocast(cfg, device):
-                logits = model(x)
+                output = model(x, return_stats=True) if return_stats else model(x)
+                logits = output[0] if return_stats else output
                 if training:
                     loss, _, count = loss_and_counts(logits, y)
                     loss = loss/count

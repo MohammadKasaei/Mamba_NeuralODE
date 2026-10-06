@@ -22,6 +22,7 @@ if __name__ == "__main__":
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--repeats", type=int, default=10)
     parser.add_argument("--device")
+    parser.add_argument("--state-statistics", action="store_true", help="Include the state-statistics kernels used by the trainer")
     args = parser.parse_args()
     if bool(args.checkpoint) == bool(args.config):
         parser.error("Supply exactly one checkpoint or --config")
@@ -39,7 +40,8 @@ if __name__ == "__main__":
             model.load_state_dict(ckpt["model"])
         model.eval()
         x, y = data.batch(args.batch_size or cfg.batch_size, args.length or cfg.seq_len, 19001, "val")
-        result = benchmark(model, x.to(device), y.to(device), cfg, device, args.warmup, args.repeats, initial_scale=ckpt["scaler"].get("scale", 65536.0) if ckpt else 65536.0)
+        result = benchmark(model, x.to(device), y.to(device), cfg, device, args.warmup, args.repeats, initial_scale=ckpt["scaler"].get("scale", 65536.0) if ckpt else 65536.0,
+                           return_stats=args.state_statistics)
         result.update(checkpoint=args.checkpoint, trained=ckpt is not None, device=str(device),
                       model=cfg.model, integrator=cfg.integrator, K=cfg.steps_per_token,
                       config=cfg.to_dict())

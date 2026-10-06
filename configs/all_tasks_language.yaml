@@ -1,0 +1,25 @@
+model: conditioned
+task: shakespeare
+embedding_dim: 64
+hidden_dim: 128
+latent_dim: 128
+field_width: 128
+transformer_ff: 256
+batch_size: 512
+seq_len: 256
+eval_lengths: [512, 1024, 2048]
+train_steps: 20000
+eval_every: 25
+eval_batch_size: 64
+eval_batches: 2
+eval_token_budget: 65536
+early_stopping_patience: 10
+early_stopping_min_delta: 0.001
+early_stopping_min_steps: 100
+warmup_steps: 100
+learning_rate: 0.001
+language_train_fraction: 0.8
+language_val_fraction: 0.1
+amp: true
+match_tolerance: 0.01
+output_dir: results/all_tasks_large_batch

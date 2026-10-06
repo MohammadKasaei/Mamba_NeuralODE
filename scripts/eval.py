@@ -12,7 +12,7 @@ from src.training.trainer import load_checkpoint, evaluate
 from src.analysis.dynamics import diagnose
 
 
-def run(checkpoint, lengths=None, batches=None, device=None, diagnostics=True, seed_offset=0):
+def run(checkpoint, lengths=None, batches=None, device=None, diagnostics=True, seed_offset=0, split="val"):
     ckpt = load_checkpoint(checkpoint)
     cfg = Config(**ckpt["config"])
     if batches is not None:
@@ -30,7 +30,7 @@ def run(checkpoint, lengths=None, batches=None, device=None, diagnostics=True, s
         results = []
         for length in (lengths or sorted(set([cfg.seq_len]+list(cfg.eval_lengths)))):
             try:
-                item = evaluate(model, data, cfg, selected, rank, world, length, seed_offset=seed_offset)
+                item = evaluate(model, data, cfg, selected, rank, world, length, seed_offset=seed_offset, split=split)
                 item["finite"] = True
             except FloatingPointError as error:
                 item = {"seq_len": length, "finite": False, "loss": None, "accuracy": None, "bpc": None, "error": str(error)}
@@ -39,13 +39,13 @@ def run(checkpoint, lengths=None, batches=None, device=None, diagnostics=True, s
         if seed_offset and cfg.task == "associative_recall" and cfg.recall_pairs > 1:
             from src.data.interventions import ChangedRecallQuery
             intervention = evaluate(model, ChangedRecallQuery(data, cfg.vocab_symbols), cfg, selected, rank, world,
-                                    cfg.seq_len, seed_offset=seed_offset)
+                                    cfg.seq_len, seed_offset=seed_offset, split=split)
             intervention["description"] = "query replaced by another present key; original labels retained"
         output = Path(checkpoint).parent
         if rank == 0:
-            (output/"extrapolation.json").write_text(json.dumps({"checkpoint": str(checkpoint), "step": ckpt["step"], "seed_offset": seed_offset, "query_ablation": intervention, "metrics": results}, indent=2))
+            (output/"extrapolation.json").write_text(json.dumps({"checkpoint": str(checkpoint), "step": ckpt["step"], "seed_offset": seed_offset, "split": split, "query_ablation": intervention, "metrics": results}, indent=2))
             if diagnostics:
-                x, _ = data.batch(cfg.diagnostics_examples, cfg.seq_len, 17001, "val")
+                x, _ = data.batch(cfg.diagnostics_examples, cfg.seq_len, 17001, split)
                 diagnose(model.float(), x[:, :cfg.diagnostics_tokens].to(selected), output/"dynamics")
             print(json.dumps(results, indent=2))
         return results
@@ -60,5 +60,6 @@ if __name__ == "__main__":
     parser.add_argument("--device")
     parser.add_argument("--no-diagnostics", action="store_true")
     parser.add_argument("--seed-offset", type=int, default=0, help="Independent synthetic holdout sampling; LM still samples validation text")
+    parser.add_argument("--split", choices=["val", "test"], default="val")
     args = parser.parse_args()
-    run(args.checkpoint, args.lengths, args.batches, args.device, not args.no_diagnostics, args.seed_offset)
+    run(args.checkpoint, args.lengths, args.batches, args.device, not args.no_diagnostics, args.seed_offset, args.split)

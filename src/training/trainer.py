@@ -33,21 +33,25 @@ def batch_seed(cfg, step, micro=0, rank=0, validation=False, length=0):
 
 
 @torch.no_grad()
-def evaluate(model, data, cfg, device, rank=0, world=1, length=None, seed_offset=0):
+def evaluate(model, data, cfg, device, rank=0, world=1, length=None, seed_offset=0, split="val"):
+    if cfg.eval_batch_size:
+        cfg = replace(cfg, batch_size=cfg.eval_batch_size, eval_batch_size=0)
     was_training = model.training
     model.eval()
     length = length or cfg.seq_len
-    totals = torch.zeros(5, device=device, dtype=torch.float64)
+    totals = torch.zeros(7, device=device, dtype=torch.float64)
     synchronize(device)
     start = time.perf_counter()
     for i in range(cfg.eval_batches):
-        x, y = data.batch(cfg.batch_size, length, batch_seed(cfg, i, rank=rank, validation=True, length=length) + seed_offset, "val")
+        x, y = data.batch(cfg.batch_size, length, batch_seed(cfg, i, rank=rank, validation=True, length=length) + seed_offset, split)
         x, y = x.to(device), y.to(device)
         with autocast(cfg, device):
             logits, _, stats = model(x, return_stats=True)
             loss, correct, count = loss_and_counts(logits, y)
+        exact = ((logits.argmax(-1) == y) | (y == -100)).all(dim=1).sum()
         totals += torch.stack((loss.double(), correct.double(), count.double(),
-                               stats["hidden_norm"].double(), stats["update_norm"].double()))
+                               stats["hidden_norm"].double(), stats["update_norm"].double(),
+                               exact.double(), count.new_tensor(x.size(0)).double()))
     synchronize(device)
     elapsed = time.perf_counter()-start
     reduce_sum(totals)
@@ -55,14 +59,15 @@ def evaluate(model, data, cfg, device, rank=0, world=1, length=None, seed_offset
     if dist.is_initialized():
         dist.all_reduce(elapsed_t, op=dist.ReduceOp.MAX)
     elapsed = elapsed_t.item()
-    loss, correct, count, hn, un = totals.tolist()
+    loss, correct, count, hn, un, exact, examples = totals.tolist()
     if not math.isfinite(loss) or not math.isfinite(hn) or not math.isfinite(un):
         raise FloatingPointError(f"Nonfinite evaluation at sequence length {length}")
     result = quality(loss/count, correct/count)
     result.update(seq_len=length, hidden_norm=hn/(cfg.eval_batches*world),
                   update_norm=un/(cfg.eval_batches*world), inference_tokens_per_sec=cfg.eval_batches*cfg.batch_size*length*world/elapsed,
                   inference_ms_per_token=elapsed*1000/(cfg.eval_batches*cfg.batch_size*length*world),
-                  supervised_tokens=int(count), inference_seconds=elapsed)
+                  supervised_tokens=int(count), inference_seconds=elapsed,
+                  examples=int(examples), exact_sequence_accuracy=exact/examples)
     model.train(was_training)
     return result
 
@@ -91,7 +96,8 @@ def restore_rng(state):
         torch.cuda.set_rng_state_all([x.cpu() for x in state["cuda"]])
 
 
-def save_checkpoint(path, model, optimizer, scaler, cfg, data, step, best, world, training_seconds):
+def save_checkpoint(path, model, optimizer, scaler, cfg, data, step, best, world, training_seconds,
+                    stopping_state=None):
     # Every rank contributes its RNG state (important for Transformer dropout).
     states = [None]*world
     local = rng_state()
@@ -103,7 +109,8 @@ def save_checkpoint(path, model, optimizer, scaler, cfg, data, step, best, world
         payload = {"model": model.state_dict(), "optimizer": optimizer.state_dict(),
                    "scaler": scaler.state_dict(), "config": cfg.to_dict(), "step": step,
                    "best_loss": best, "vocab_size": data.vocab_size, "data": data.metadata,
-                   "rng_states": states, "world_size": world, "training_seconds": training_seconds}
+                   "rng_states": states, "world_size": world, "training_seconds": training_seconds,
+                   "stopping_state": stopping_state or {}}
         temporary = Path(str(path)+".tmp")
         torch.save(payload, temporary)
         temporary.replace(path)
@@ -125,11 +132,13 @@ def train(cfg):
         optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
         scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp and device.type == "cuda")
         start_step, best, training_seconds = 0, float("inf"), 0.0
+        stopping_state = {"anchor_loss": None, "stale_checks": 0, "skipped_updates": 0, "nan_inf_events": 0}
         if cfg.resume:
             ckpt = load_checkpoint(cfg.resume, device)
             if ckpt["world_size"] != world:
                 raise ValueError("Exact resume requires the same world size")
-            previous = ckpt["config"]
+            from src.config import Config
+            previous = Config(**ckpt["config"]).to_dict()
             allowed = {"resume", "output_dir", "device", "diagnostics_examples", "diagnostics_tokens"}
             changed = [k for k, v in cfg.to_dict().items() if k not in allowed and v != previous[k]]
             if changed or ckpt["data"] != data.metadata:
@@ -139,6 +148,7 @@ def train(cfg):
             scaler.load_state_dict(ckpt["scaler"])
             start_step, best = ckpt["step"], ckpt["best_loss"]
             training_seconds = ckpt.get("training_seconds", 0.0)
+            stopping_state.update(ckpt.get("stopping_state", {}))
         unused_embedding = cfg.model == "structured" and not cfg.a_conditioned and not cfg.b_conditioned and cfg.structured_drive == "bias"
         wrapper = DDP(model, device_ids=[device.index] if device.type == "cuda" else None, find_unused_parameters=unused_embedding) if world > 1 else model
         if cfg.resume:
@@ -167,9 +177,29 @@ def train(cfg):
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
         metrics_file = output/"metrics.csv"
-        nan_events, skipped_updates = 0, 0
+        # Discard rows newer than the atomic checkpoint after an interrupted run.
+        if cfg.resume and rank == 0 and metrics_file.exists():
+            with metrics_file.open(newline="") as file:
+                reader = csv.DictReader(file)
+                columns = reader.fieldnames
+                rows = [row for row in reader if int(row["step"]) <= start_step]
+            with metrics_file.open("w", newline="") as file:
+                writer = csv.DictWriter(file, fieldnames=columns)
+                writer.writeheader()
+                writer.writerows(rows)
+            if rows and not ckpt.get("stopping_state"):
+                stopping_state.update(skipped_updates=int(rows[-1]["skipped_updates"]),
+                                      nan_inf_events=int(rows[-1]["nan_inf_events"]))
+        nan_events, skipped_updates = stopping_state["nan_inf_events"], stopping_state["skipped_updates"]
         last_eval = None
-        for step in range(start_step, cfg.train_steps):
+        early_stopped = False
+        step = start_step-1
+        finished_resume = bool(cfg.resume and (start_step >= cfg.train_steps or (
+            cfg.early_stopping_patience and stopping_state["stale_checks"] >= cfg.early_stopping_patience)))
+        if finished_resume:
+            last_eval = evaluate(model, data, cfg, device, rank, world)
+            early_stopped = bool(cfg.early_stopping_patience and stopping_state["stale_checks"] >= cfg.early_stopping_patience)
+        for step in (() if finished_resume else range(start_step, cfg.train_steps)):
             wrapper.train()
             optimizer.zero_grad(set_to_none=True)
             if step < cfg.warmup_steps:
@@ -240,10 +270,19 @@ def train(cfg):
                 # Evaluate underlying module, without DDP forward collectives.
                 last_eval = evaluate(model, data, cfg, device, rank, world)
                 row.update(val_loss=last_eval["loss"], val_bpc=last_eval["bpc"], val_accuracy=last_eval["accuracy"])
+                stopping_state.update(skipped_updates=skipped_updates, nan_inf_events=nan_events)
+                if step+1 >= cfg.early_stopping_min_steps:
+                    anchor = stopping_state["anchor_loss"]
+                    if anchor is None or last_eval["loss"] < anchor-cfg.early_stopping_min_delta:
+                        stopping_state.update(anchor_loss=last_eval["loss"], stale_checks=0)
+                    else:
+                        stopping_state["stale_checks"] += 1
+                    early_stopped = bool(cfg.early_stopping_patience and
+                                         stopping_state["stale_checks"] >= cfg.early_stopping_patience)
                 if last_eval["loss"] < best:
                     best = last_eval["loss"]
-                    save_checkpoint(output/"best.pt", model, optimizer, scaler, cfg, data, step+1, best, world, training_seconds)
-                save_checkpoint(output/"final.pt", model, optimizer, scaler, cfg, data, step+1, best, world, training_seconds)
+                    save_checkpoint(output/"best.pt", model, optimizer, scaler, cfg, data, step+1, best, world, training_seconds, stopping_state)
+                save_checkpoint(output/"final.pt", model, optimizer, scaler, cfg, data, step+1, best, world, training_seconds, stopping_state)
                 if rank == 0:
                     print(f"{cfg.model} step={step+1} train={sl/sn:.4f} val={best:.4f} tokens/s={row['train_tokens_per_sec']:.0f}", flush=True)
             if rank == 0:
@@ -253,8 +292,19 @@ def train(cfg):
                     if not exists:
                         writer.writeheader()
                     writer.writerow(row)
+            if early_stopped:
+                if rank == 0:
+                    print(f"Early stopping at {step+1}: {stopping_state['stale_checks']} checks without improvement", flush=True)
+                break
         if rank == 0 and last_eval is not None:
             (output/"validation.json").write_text(json.dumps(last_eval, indent=2))
+            (output/"training_summary.json").write_text(json.dumps({
+                "status": "early_stopped" if early_stopped else "budget_complete",
+                "attempted_updates": step+1, "successful_updates": step+1-skipped_updates,
+                "skipped_updates": skipped_updates, "nan_inf_events": nan_events,
+                "best_validation_loss": best, "training_seconds": training_seconds,
+                "stopping_state": stopping_state}, indent=2))
+            (output/"failure.json").unlink(missing_ok=True)
         return cfg
     except Exception as error:
         if rank == 0:

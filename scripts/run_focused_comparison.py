@@ -65,7 +65,7 @@ def main():
     protocol = dict(config=cfg.to_dict(), seeds=args.seeds, architecture_models=list(ARCHITECTURES),
                     solver_settings=[["euler", 1], ["euler", 4], ["heun", 4]], parameters_target=target,
                     world_size=1, effective_batch=cfg.batch_size*cfg.accumulation_steps,
-                    test_seed_offset=TEST_SEED_OFFSET, examples_per_test_length=cfg.batch_size*cfg.eval_batches,
+                    test_seed_offset=TEST_SEED_OFFSET, examples_per_test_length=cfg.evaluation_batch_size*cfg.eval_batches,
                     hardware_policy="One independent experiment per GPU; same global batch for every model",
                     checkpoint_selection="minimum fixed-stream validation CE; report independent test accuracy",
                     entries=entries)
