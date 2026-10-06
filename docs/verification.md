@@ -92,3 +92,8 @@ The saved full plans contain 1,044 synthetic and 294 language configurations. Ex
 - `results/synthetic_full/plan.json` and `results/language_full/plan.json`: planned configurations; full training was not launched.
 
 Generated result artifacts are ignored by Git to keep checkpoint/data binaries out of source control. They remain present in the workspace. Reproduce them using the README commands.
+
+
+## Completed three-seed follow-up
+
+The requested focused follow-up is complete: 18 matched-capacity runs, three seeds, 1,000 updates each, independent synthetic testing through length 2048, query-key controls and isolated benchmarking. See [focused_comparison.md](focused_comparison.md) for the conclusions and `results/focused_recall/summary/focused_report.md` for full results. This adds evidence under one compact recall protocol; the broad research sweeps remain unexecuted. The updated suite passes 57 tests.

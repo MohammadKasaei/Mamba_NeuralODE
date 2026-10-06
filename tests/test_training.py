@@ -47,3 +47,21 @@ def test_matching_does_not_change_embeddings():
         matched = match_capacity(cfg, 20)
         assert matched.embedding_dim == cfg.embedding_dim
         assert abs(parameter_count(build_model(matched, 20))/12000 - 1) < 0.1
+
+
+def test_independent_synthetic_holdout_seed_offset():
+    from src.data.factory import build_data
+    cfg = Config(model="gru", embedding_dim=8, hidden_dim=12, vocab_symbols=4, recall_pairs=2,
+                 batch_size=2, seq_len=12, eval_batches=2, device="cpu", amp=False)
+    data = build_data(cfg)
+    seeds = []
+    class RecordingData:
+        def batch(self, batch_size, length, seed, split):
+            seeds.append(seed)
+            return data.batch(batch_size, length, seed, split)
+    network = build_model(cfg, data.vocab_size)
+    trainer.evaluate(network, RecordingData(), cfg, torch.device("cpu"))
+    first = seeds.copy(); seeds.clear()
+    trainer.evaluate(network, RecordingData(), cfg, torch.device("cpu"), seed_offset=1000000000000)
+    assert seeds == [seed+1000000000000 for seed in first]
+    assert network.training

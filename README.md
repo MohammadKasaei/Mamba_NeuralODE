@@ -288,3 +288,16 @@ Further concerns: LayerNorm makes the generic field smooth with epsilon regulari
 Token-dependent fields may already differ at random initialization. Cosine/L2 diagnostics show dependence on x; they do not by themselves demonstrate learned, task-useful selective memory.
 
 The native GRU/LSTM cells return FP16 state under CUDA AMP, while ODE accumulators and projected memory explicitly stay FP32. Disable AMP for a comparison sensitive to state quantization. The three ODE conditioning formulations share FP32 state accumulation to avoid this confound within H1.
+
+## Executed three-seed follow-up
+
+The focused follow-up compares conditioned, autonomous projected, structured, and GRU models at matched capacity, then compares conditioned Euler/K=1, Euler/K=4, and Heun/K=4. Euler/K=1 is shared, giving 18 unique runs for three seeds.
+
+```bash
+python scripts/run_focused_comparison.py --output results/focused_recall
+python scripts/run_focused_comparison.py --output results/focused_recall --execute --gpus 0 1 2 3
+```
+
+Defaults are in `configs/focused_recall.yaml`: length 64, embedding 32, reference memory/latent 64, batch 64, 1,000 attempted updates, and 512 validation/test examples per seed and length. Independent single-GPU jobs are queued over four GPUs, so every condition has the same global batch without compact-model DDP communication overhead. The train/validation streams are paired across conditions within each seed. Checkpoint selection uses validation CE; final test evaluation adds a sampling-seed offset of 10^12 to use an independent synthetic stream. The language loader still uses its original validation text when this optional offset is used.
+
+All training completes before isolated benchmarks run sequentially on a common GPU. Benchmarks initialize AMP scaling from the trained checkpoint and report skipped updates. Outputs include `summary/test_summary.csv`, `seed_aggregates.csv`, `paired_contrasts.json`, `shortcut_baselines.csv`, and `focused_report.md`, plus seed error bars, learning curves, quality/compute and length-extrapolation plots. The frequent-value and recent-value baselines test whether a model exploits a shortcut rather than retrieving the queried key. Exploratory paired 95% t intervals use three seed differences and are not corrected for multiple comparisons.

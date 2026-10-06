@@ -33,7 +33,7 @@ def batch_seed(cfg, step, micro=0, rank=0, validation=False, length=0):
 
 
 @torch.no_grad()
-def evaluate(model, data, cfg, device, rank=0, world=1, length=None):
+def evaluate(model, data, cfg, device, rank=0, world=1, length=None, seed_offset=0):
     was_training = model.training
     model.eval()
     length = length or cfg.seq_len
@@ -41,7 +41,7 @@ def evaluate(model, data, cfg, device, rank=0, world=1, length=None):
     synchronize(device)
     start = time.perf_counter()
     for i in range(cfg.eval_batches):
-        x, y = data.batch(cfg.batch_size, length, batch_seed(cfg, i, rank=rank, validation=True, length=length), "val")
+        x, y = data.batch(cfg.batch_size, length, batch_seed(cfg, i, rank=rank, validation=True, length=length) + seed_offset, "val")
         x, y = x.to(device), y.to(device)
         with autocast(cfg, device):
             logits, _, stats = model(x, return_stats=True)

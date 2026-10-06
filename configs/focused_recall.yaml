@@ -1,0 +1,22 @@
+# Follow-up to the one-seed pilot: four architectures and three solver settings.
+# scripts/run_focused_comparison.py shares conditioned Euler/K=1 across both groups.
+model: conditioned
+task: associative_recall
+embedding_dim: 32
+hidden_dim: 64
+latent_dim: 64
+field_width: 64
+transformer_ff: 128
+seq_len: 64
+eval_lengths: [128, 256, 512, 1024, 2048]
+batch_size: 64
+accumulation_steps: 1
+train_steps: 1000
+warmup_steps: 50
+eval_every: 100
+eval_batches: 8
+learning_rate: 0.001
+vocab_symbols: 16
+recall_pairs: 8
+amp: true
+output_dir: results/focused_recall

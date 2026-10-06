@@ -37,3 +37,17 @@ def test_structured_coefficients(ac, bc, drive):
         torch.testing.assert_close(a[0], a[1])
     if not bc and drive == "bias":
         torch.testing.assert_close(b[0], b[1])
+
+
+def test_query_intervention_preserves_context_and_labels():
+    from src.data.interventions import ChangedRecallQuery
+    cfg = Config(task="associative_recall", vocab_symbols=8, recall_pairs=4)
+    data = SyntheticData(cfg)
+    x, y = data.batch(16, 32, 123)
+    changed, targets = ChangedRecallQuery(data, cfg.vocab_symbols).batch(16, 32, 123)
+    assert torch.equal(x[:, :-2], changed[:, :-2])
+    assert torch.equal(x[:, -1], changed[:, -1])
+    assert torch.equal(y, targets)
+    assert (x[:, -2] != changed[:, -2]).all()
+    for row in changed:
+        assert (row[:-2] == row[-2]).sum() == 1

@@ -39,7 +39,7 @@ if __name__ == "__main__":
             model.load_state_dict(ckpt["model"])
         model.eval()
         x, y = data.batch(args.batch_size or cfg.batch_size, args.length or cfg.seq_len, 19001, "val")
-        result = benchmark(model, x.to(device), y.to(device), cfg, device, args.warmup, args.repeats)
+        result = benchmark(model, x.to(device), y.to(device), cfg, device, args.warmup, args.repeats, initial_scale=ckpt["scaler"].get("scale", 65536.0) if ckpt else 65536.0)
         result.update(checkpoint=args.checkpoint, trained=ckpt is not None, device=str(device),
                       model=cfg.model, integrator=cfg.integrator, K=cfg.steps_per_token,
                       config=cfg.to_dict())

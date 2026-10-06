@@ -39,7 +39,7 @@ def estimate_flops(model, x):
     return count[0]/x.numel()
 
 
-def benchmark(model, x, y, cfg, device, warmup=3, repeats=10):
+def benchmark(model, x, y, cfg, device, warmup=3, repeats=10, initial_scale=65536.0):
     if repeats < 1 or warmup < 0:
         raise ValueError("repeats >= 1 and warmup >= 0 required")
     results = {"parameters": parameter_count(model), "nfe_per_token": model.nfe_per_token,
@@ -48,7 +48,8 @@ def benchmark(model, x, y, cfg, device, warmup=3, repeats=10):
                "flops_scope": "dominant dense multiply-adds; excludes elementwise, backward and optimizer",
                "timing_scope": "single device, resident batch; training includes optimizer, excludes data generation"}
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.0)
-    scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp and device.type == "cuda")
+    scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp and device.type == "cuda", init_scale=initial_scale)
+    skipped = [0]
     for training in (False, True):
         model.train(training)
         def iteration():
@@ -65,13 +66,16 @@ def benchmark(model, x, y, cfg, device, warmup=3, repeats=10):
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+                before = scaler.get_scale()
                 scaler.step(optimizer)
                 scaler.update()
+                skipped[0] += int(scaler.get_scale() < before)
         for _ in range(warmup):
             iteration()
         synchronize(device)
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
+        skips_before = skipped[0]
         start = time.perf_counter()
         for _ in range(repeats):
             iteration()
@@ -80,6 +84,9 @@ def benchmark(model, x, y, cfg, device, warmup=3, repeats=10):
         name = "train" if training else "inference"
         results[f"{name}_tokens_per_sec"] = x.numel()*repeats/elapsed
         results[f"{name}_ms_per_token"] = elapsed*1000/(x.numel()*repeats)
+        if training:
+            results["train_skipped_updates"] = skipped[0]-skips_before
+            results["amp_scale"] = scaler.get_scale()
         results[f"{name}_peak_memory_bytes"] = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else 0
     model.eval()
     return results
