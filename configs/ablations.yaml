@@ -1,0 +1,31 @@
+# This file documents the generated axes, not a trainer Config.
+# scripts/run_*_sweep.py saves one strict trainer YAML per experiment.
+main:
+  models: [gru, lstm, residual, autonomous, conditioned, augmented, projected_conditioned, structured, transformer]
+  seeds: [0, 1, 2]
+  synthetic_train_lengths: [64, 128, 256]
+  language_train_lengths: [256]
+  parameter_matching: within_10_percent_of_default_gru
+integration:
+  models: [autonomous, conditioned, projected_conditioned, structured]
+  integrators: [euler, heun, rk4]
+  steps: [1, 2, 4, 8]
+  residual_control: euler_with_same_steps
+state:
+  models: [gru, lstm, residual, autonomous, conditioned, augmented, projected_conditioned, structured]
+  sizes: [128, 256, 512]
+  parameter_matching: false
+conditioning:
+  model: structured
+  a_conditioned: [false, true]
+  b_conditioned: [false, true]
+  stable_a: [false, true]
+  structured_drive: [bias, matrix]
+  parameter_matching: false
+stability:
+  model: conditioned
+  damping: [false, true]
+  gated: [false, true]
+full_suite:
+  strategy: main_at_all_lengths_and_one_factor_ablations_at_base_config_length
+  resource_policy: reduce_microbatch_with_NFE_and_length_preserving_effective_batch

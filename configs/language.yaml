@@ -1,0 +1,18 @@
+model: conditioned
+task: shakespeare
+embedding_dim: 128
+hidden_dim: 256
+latent_dim: 256
+field_width: 256
+seq_len: 256
+eval_lengths: [256, 512, 1024, 2048]
+batch_size: 8
+accumulation_steps: 4
+train_steps: 5000
+eval_every: 100
+eval_batches: 16
+steps_per_token: 1
+integrator: euler
+seed: 0
+amp: true
+output_dir: results/language_conditioned

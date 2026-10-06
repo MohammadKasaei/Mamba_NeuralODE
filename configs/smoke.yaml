@@ -1,0 +1,18 @@
+model: conditioned
+task: associative_recall
+embedding_dim: 16
+hidden_dim: 32
+latent_dim: 32
+field_width: 32
+transformer_ff: 64
+seq_len: 32
+batch_size: 8
+recall_pairs: 4
+vocab_symbols: 8
+train_steps: 4
+eval_every: 2
+eval_batches: 2
+eval_lengths: [32, 64]
+warmup_steps: 0
+amp: false
+output_dir: results/smoke

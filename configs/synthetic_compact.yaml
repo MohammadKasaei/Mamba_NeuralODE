@@ -1,0 +1,18 @@
+# Three-seed research design with reduced capacity and update budget.
+# Keeps all tasks, requested solver/depth/state ablations and 2048-token evaluation.
+model: conditioned
+task: associative_recall
+embedding_dim: 32
+hidden_dim: 64
+latent_dim: 64
+field_width: 64
+transformer_ff: 128
+seq_len: 64
+eval_lengths: [128, 256, 512, 1024, 2048]
+batch_size: 16
+train_steps: 500
+warmup_steps: 20
+eval_every: 100
+eval_batches: 4
+amp: true
+output_dir: results/synthetic_compact
